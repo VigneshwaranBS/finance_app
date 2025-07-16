@@ -22,7 +22,7 @@ from pymongo import MongoClient
 # ---------------- Setup ----------------
 
 
-client = MongoClient("mongodb+srv://thanusri:Thanu%402003@cluster0.jtoon3t.mongodb.net/")
+client = MongoClient("mongodb+srv://thanusri:Thanu%402003@cluster0.jtoon3t.mongodb.net/finance_db?retryWrites=true&w=majority&tls=true&tlsAllowInvalidCertificates=true")
 db = client["finance"]
 collection = db["user_finance"]
 users_col = db["users"]
