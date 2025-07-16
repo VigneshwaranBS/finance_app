@@ -35,6 +35,7 @@ db = client[os.getenv("MONGO_DB")]
 collection = db["user_finance"]
 users_col = db["users"]
 reset_tokens_col = db["reset_tokens"]
+data_entries_col = db["data_entries"]
 
 LOG_FILE = os.path.join(os.getcwd(), 'update_log.xlsx')
 
@@ -2037,163 +2038,245 @@ elif selected == "Data Entry":
         submit_btn = st.form_submit_button("Submit")
 
         if submit_btn:
-            new_data = pd.DataFrame([{
-                "Date": entry_date.strftime("%Y-%m-%d"),
-                "Name": name.strip(),
-                "Amount": amount,
-                "Interest": interest,
-                "Total": total,
-                "created_by_user": login_state.get("username")  # Add user ownership
-            }])
-
-            if os.path.exists(DATA_ENTRY_FILE):
-                df_existing = pd.read_excel(DATA_ENTRY_FILE)
-                df_combined = pd.concat([df_existing, new_data], ignore_index=True)
+            if not name.strip():
+                st.error("Name is required!")
             else:
-                df_combined = new_data
+                # Create data entry document
+                entry_doc = {
+                    "date": datetime.combine(entry_date, datetime.min.time()),  # Convert date to datetime
+                    "name": name.strip(),
+                    "amount": float(amount),
+                    "interest": float(interest),
+                    "total": float(total),
+                    "created_by_user": login_state.get("username"),
+                    "created_at": datetime.now()
+                }
+                
+                # Save to MongoDB
+                data_entries_col.insert_one(entry_doc)
+                
+                # Also save to Excel for backup
+                new_data = pd.DataFrame([{
+                    "Date": entry_date.strftime("%Y-%m-%d"),
+                    "Name": name.strip(),
+                    "Amount": amount,
+                    "Interest": interest,
+                    "Total": total,
+                    "created_by_user": login_state.get("username")
+                }])
 
-            df_combined.to_excel(DATA_ENTRY_FILE, index=False)
-            st.success("✅ Data saved to Excel!")
+                if os.path.exists(DATA_ENTRY_FILE):
+                    df_existing = pd.read_excel(DATA_ENTRY_FILE)
+                    df_combined = pd.concat([df_existing, new_data], ignore_index=True)
+                else:
+                    df_combined = new_data
 
-    if os.path.exists(DATA_ENTRY_FILE):
-        # New feature: Filter by user
-        st.subheader("🔍 View User Entries")
-        df = pd.read_excel(DATA_ENTRY_FILE)
-        
-        # Filter data based on user permissions - all users see only their own data
-        if 'created_by_user' in df.columns:
-            df = df[df['created_by_user'] == login_state.get("username")]
-        else:
-            # If created_by_user column doesn't exist, show empty dataframe for non-admin users
-            df = df.iloc[0:0]  # Empty dataframe with same structure
-        
-        # Get unique names
-        unique_names = sorted(df['Name'].unique().tolist())
-        if not unique_names:
-            st.info("No entries found. Add some entries using the form above.")
-            st.stop()
-        
-        selected_name = st.selectbox("Select a user to view their entries", unique_names)
-        
-        user_df = df[df['Name'] == selected_name]
-        st.write(f"### All entries for {selected_name}")
-        
-        # Calculate and display summary stats
-        total_amount = user_df['Amount'].sum()
-        total_interest = user_df['Interest'].sum()
-        overall_total = user_df['Total'].sum()
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Total Amount", f"₹{total_amount:,.2f}")
-        with col2:
-            st.metric("Total Interest", f"₹{total_interest:,.2f}")
-        with col3:
-            st.metric("Overall Total", f"₹{overall_total:,.2f}")
-        
-        st.dataframe(user_df, use_container_width=True)
-        
-        st.subheader("✏️ Edit Data")
-        
-        # Filter the dataframe for editing based on user permissions - all users see only their own data
-        edit_df = pd.read_excel(DATA_ENTRY_FILE)
-        if 'created_by_user' in edit_df.columns:
-            edit_df = edit_df[edit_df['created_by_user'] == login_state.get("username")]
-        else:
-            # If created_by_user column doesn't exist, show empty dataframe
-            edit_df = edit_df.iloc[0:0]  # Empty dataframe with same structure
-        
-        # Add a delete column with checkboxes
+                df_combined.to_excel(DATA_ENTRY_FILE, index=False)
+                st.success("✅ Data saved to database and Excel!")
+                st.rerun()
+
+    # New feature: Filter by user - Read from Database
+    st.subheader("🔍 View User Entries")
+    
+    # Get data from MongoDB
+    user_filter = {"created_by_user": login_state.get("username")}
+    entries = list(data_entries_col.find(user_filter).sort("date", -1))
+    
+    if not entries:
+        st.info("No entries found. Add some entries using the form above.")
+        st.stop()
+    
+    # Convert to DataFrame
+    df_entries = pd.DataFrame(entries)
+    df_entries['Date'] = pd.to_datetime(df_entries['date']).dt.strftime('%Y-%m-%d')
+    df_entries['Name'] = df_entries['name']
+    df_entries['Amount'] = df_entries['amount']
+    df_entries['Interest'] = df_entries['interest']
+    df_entries['Total'] = df_entries['total']
+    
+    # Display columns in proper order
+    display_df = df_entries[['Date', 'Name', 'Amount', 'Interest', 'Total']].copy()
+    
+    # Get unique names (filter out NaN values)
+    unique_names = sorted([name for name in df_entries['name'].unique() if pd.notna(name)])
+    
+    selected_name = st.selectbox("Select a user to view their entries", unique_names)
+    
+    user_df = display_df[display_df['Name'] == selected_name]
+    st.write(f"### All entries for {selected_name}")
+    
+    # Calculate and display summary stats
+    total_amount = user_df['Amount'].sum()
+    total_interest = user_df['Interest'].sum()
+    overall_total = user_df['Total'].sum()
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Amount", f"₹{total_amount:,.2f}")
+    with col2:
+        st.metric("Total Interest", f"₹{total_interest:,.2f}")
+    with col3:
+        st.metric("Overall Total", f"₹{overall_total:,.2f}")
+    
+    st.dataframe(user_df, use_container_width=True)
+    
+    st.subheader("✏️ Edit Data")
+    
+    # Get data for editing from MongoDB
+    if entries:
+        # Convert MongoDB data to editable DataFrame
+        edit_df = display_df.copy()
+        edit_df['_id'] = [str(entry['_id']) for entry in entries]  # Keep MongoDB _id for updates
         edit_df['Delete'] = False
+        
         edited_df = st.data_editor(
             edit_df,
             use_container_width=True,
             key="edit_data_entry",
             column_config={
-                "Delete": st.column_config.CheckboxColumn("Delete?")
+                "Delete": st.column_config.CheckboxColumn("Delete?"),
+                "_id": None  # Hide the _id column
             }
         )
         
         # Check if any rows are marked for deletion
         if edited_df['Delete'].any():
             if st.button("Confirm Delete Selected Rows"):
-                # Filter out rows marked for deletion
-                edited_df = edited_df[~edited_df['Delete']]
-                # Remove the Delete column before saving
-                edited_df = edited_df.drop(columns=['Delete'])
+                # Get rows marked for deletion
+                rows_to_delete = edited_df[edited_df['Delete']]
                 
-                # Merge with the full dataset
-                # Read the full dataset
-                full_df = pd.read_excel(DATA_ENTRY_FILE)
-                # Remove user's existing data
-                if 'created_by_user' in full_df.columns:
-                    full_df = full_df[full_df['created_by_user'] != login_state.get("username")]
-                # Add user's updated data (after deletions)
-                full_df = pd.concat([full_df, edited_df], ignore_index=True)
-                full_df.to_excel(DATA_ENTRY_FILE, index=False)
+                # Delete from MongoDB
+                for _, row in rows_to_delete.iterrows():
+                    from bson import ObjectId
+                    data_entries_col.delete_one({"_id": ObjectId(row['_id'])})
+                
+                # Update Excel backup
+                if os.path.exists(DATA_ENTRY_FILE):
+                    df_excel = pd.read_excel(DATA_ENTRY_FILE)
+                    if 'created_by_user' in df_excel.columns:
+                        # Remove corresponding entries from Excel
+                        for _, row in rows_to_delete.iterrows():
+                            mask = ((df_excel['Date'] == row['Date']) & 
+                                   (df_excel['Name'] == row['Name']) & 
+                                   (df_excel['Amount'] == row['Amount']) &
+                                   (df_excel['created_by_user'] == login_state.get("username")))
+                            df_excel = df_excel[~mask]
+                        df_excel.to_excel(DATA_ENTRY_FILE, index=False)
                     
-                st.success("✅ Selected rows deleted and changes saved!")
+                st.success("✅ Selected rows deleted from database!")
                 st.rerun()
         
         # Check for other edits (non-deletion changes)
-        elif not edited_df.drop(columns=['Delete']).equals(edit_df.drop(columns=['Delete'])):
-            # Merge changes with the full dataset
-            # Read the full dataset
-            full_df = pd.read_excel(DATA_ENTRY_FILE)
-            # Remove user's existing data
-            if 'created_by_user' in full_df.columns:
-                full_df = full_df[full_df['created_by_user'] != login_state.get("username")]
-            # Add user's updated data
-            user_edited_df = edited_df.drop(columns=['Delete'])
-            full_df = pd.concat([full_df, user_edited_df], ignore_index=True)
-            full_df.to_excel(DATA_ENTRY_FILE, index=False)
-            st.success("✅ Changes saved to Excel!")
+        elif not edited_df.drop(columns=['Delete', '_id']).equals(edit_df.drop(columns=['Delete', '_id'])):
+            # Update MongoDB with changes
+            changes_made = False
+            for idx, row in edited_df.iterrows():
+                if not row['Delete']:  # Skip deleted rows
+                    original_row = edit_df.iloc[idx]
+                    # Check if this row was actually changed
+                    if not (row.drop(['Delete', '_id']).equals(original_row.drop(['Delete', '_id']))):
+                        from bson import ObjectId
+                        # Update in MongoDB
+                        data_entries_col.update_one(
+                            {"_id": ObjectId(row['_id'])},
+                            {"$set": {
+                                "date": pd.to_datetime(row['Date']),  # Keep as datetime, not date
+                                "name": row['Name'],
+                                "amount": float(row['Amount']),
+                                "interest": float(row['Interest']),
+                                "total": float(row['Total'])
+                            }}
+                        )
+                        changes_made = True
             
-        # Add Excel download button with styling at the bottom
-        st.markdown("---")  # Add a horizontal line for separation
-        
-        def export_to_excel(dataframe):
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                dataframe.to_excel(writer, index=False, sheet_name='CombinedData')
-
-                from openpyxl.styles import Font, Alignment, PatternFill
-                import openpyxl
-
-                workbook = writer.book
-                worksheet = writer.sheets['CombinedData']
-                header_font = Font(bold=True, color="FFFFFF")
-                header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
-
-                for col_num, column_title in enumerate(dataframe.columns, 1):
-                    col_letter = openpyxl.utils.get_column_letter(col_num)
-                    cell = worksheet[f'{col_letter}1']
-                    cell.font = header_font
-                    cell.fill = header_fill
-                    worksheet.column_dimensions[col_letter].width = max(15, len(column_title) + 3)
-
-                for row in worksheet.iter_rows(min_row=2, max_row=worksheet.max_row, min_col=1, max_col=worksheet.max_column):
-                    for cell in row:
-                        cell.alignment = Alignment(horizontal='center', vertical='center')
-
-            return output.getvalue()
-
-        # Export only the data the user has access to - all users see only their own data
-        export_df = pd.read_excel(DATA_ENTRY_FILE)
-        if 'created_by_user' in export_df.columns:
-            export_df = export_df[export_df['created_by_user'] == login_state.get("username")]
-        else:
-            # If created_by_user column doesn't exist, show empty dataframe
-            export_df = export_df.iloc[0:0]  # Empty dataframe with same structure
-        
-        excel_bytes = export_to_excel(export_df)
-        st.download_button(
-            label="📥 Download Data as Excel",
-            data=excel_bytes,
-            file_name="Data_entry.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+            if changes_made:
+                # Update Excel backup
+                if os.path.exists(DATA_ENTRY_FILE):
+                    # Recreate Excel from MongoDB data
+                    all_entries = list(data_entries_col.find({"created_by_user": login_state.get("username")}))
+                    if all_entries:
+                        df_backup = pd.DataFrame([{
+                            "Date": entry['date'].strftime("%Y-%m-%d") if hasattr(entry['date'], 'strftime') else str(entry['date']),
+                            "Name": entry['name'],
+                            "Amount": entry['amount'],
+                            "Interest": entry['interest'],
+                            "Total": entry['total'],
+                            "created_by_user": entry['created_by_user']
+                        } for entry in all_entries])
+                        
+                        # Read existing Excel and update user's portion
+                        if os.path.exists(DATA_ENTRY_FILE):
+                            df_excel = pd.read_excel(DATA_ENTRY_FILE)
+                            if 'created_by_user' in df_excel.columns:
+                                # Remove user's old data
+                                df_excel = df_excel[df_excel['created_by_user'] != login_state.get("username")]
+                                # Add user's updated data
+                                df_excel = pd.concat([df_excel, df_backup], ignore_index=True)
+                            else:
+                                df_excel = df_backup
+                        else:
+                            df_excel = df_backup
+                        
+                        df_excel.to_excel(DATA_ENTRY_FILE, index=False)
+                
+                st.success("✅ Changes saved to database!")
+                st.rerun()
     else:
-        st.info("No records yet. Use the form above to add entries.")
+        st.info("No entries to edit. Add some entries first.")
+    
+    # Add Excel download button with styling at the bottom
+    st.markdown("---")  # Add a horizontal line for separation
+    
+    def export_to_excel(dataframe):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            dataframe.to_excel(writer, index=False, sheet_name='CombinedData')
+
+            from openpyxl.styles import Font, Alignment, PatternFill
+            import openpyxl
+
+            workbook = writer.book
+            worksheet = writer.sheets['CombinedData']
+            header_font = Font(bold=True, color="FFFFFF")
+            header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+
+            for col_num, column_title in enumerate(dataframe.columns, 1):
+                col_letter = openpyxl.utils.get_column_letter(col_num)
+                cell = worksheet[f'{col_letter}1']
+                cell.font = header_font
+                cell.fill = header_fill
+                worksheet.column_dimensions[col_letter].width = max(15, len(column_title) + 3)
+
+            for row in worksheet.iter_rows(min_row=2, max_row=worksheet.max_row, min_col=1, max_col=worksheet.max_column):
+                for cell in row:
+                    cell.alignment = Alignment(horizontal='center', vertical='center')
+
+        return output.getvalue()
+
+    # Export data from MongoDB
+    user_filter = {"created_by_user": login_state.get("username")}
+    export_entries = list(data_entries_col.find(user_filter).sort("date", -1))
+    
+    if export_entries:
+        export_df = pd.DataFrame([{
+            "Date": entry['date'].strftime("%Y-%m-%d") if hasattr(entry['date'], 'strftime') else str(entry['date']),
+            "Name": entry['name'],
+            "Amount": entry['amount'],
+            "Interest": entry['interest'],
+            "Total": entry['total']
+        } for entry in export_entries])
+    else:
+        # Empty dataframe if no entries
+        export_df = pd.DataFrame(columns=["Date", "Name", "Amount", "Interest", "Total"])
+    
+    excel_bytes = export_to_excel(export_df)
+    st.download_button(
+        label="📥 Download Data as Excel",
+        data=excel_bytes,
+        file_name="Data_entry.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+else:
+    st.info("No records yet. Use the form above to add entries.")
         
 client.close()
