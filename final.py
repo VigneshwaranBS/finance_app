@@ -503,17 +503,19 @@ def load_dashboard_theme():
     .metric-card {{
         background: linear-gradient(145deg, rgba(26, 16, 61, 0.9), rgba(13, 8, 38, 0.9)) !important;
         border-radius: 16px;
-        padding: 1.5rem 1rem;  /* Adjusted padding */
+        padding: 1.5rem 0.8rem;  /* Reduced horizontal padding */
         text-align: center;
         border: 1px solid var(--accent);
         transition: all 0.3s ease;
         box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
         position: relative;
-        overflow: visible;  /* Changed from hidden to visible */
+        overflow: hidden;  /* Prevent overflow */
         min-height: 140px;
         display: flex;
         flex-direction: column;
         justify-content: center;
+        width: 100%;  /* Ensure full width usage */
+        box-sizing: border-box;
     }}
     
     .metric-card:before {{
@@ -527,7 +529,7 @@ def load_dashboard_theme():
     }}
     
     .metric-label {{
-        font-size: 1rem;
+        font-size: 0.9rem;  /* Slightly smaller */
         color: rgba(255,255,255,0.9);
         letter-spacing: 0.5px;
         text-transform: uppercase;
@@ -535,10 +537,12 @@ def load_dashboard_theme():
         margin-bottom: 0.5rem;
         line-height: 1.2;
         white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;  /* Add ellipsis for long labels */
     }}
     
     .metric-value {{
-        font-size: 2.2rem;  /* Slightly reduced from 2.8rem */
+        font-size: 1.8rem;  /* Reduced font size */
         font-weight: 700;
         color: var(--highlight);
         margin: 0.25rem 0;
@@ -547,19 +551,45 @@ def load_dashboard_theme():
         background: linear-gradient(to right, var(--highlight), var(--accent));
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
-        word-break: break-word;
-        overflow: visible;
-        line-height: 1.2;
+        word-wrap: break-word;  /* Break long words */
+        overflow-wrap: break-word;  /* Better word breaking */
+        line-height: 1.1;
+        max-width: 100%;
+        overflow: hidden;
+        display: block;
+        hyphens: auto;  /* Auto hyphenation */
     }}
     
     /* Responsive adjustments */
+    @media (max-width: 1400px) {{
+        .metric-value {{
+            font-size: 1.6rem;
+        }}
+    }}
+    
     @media (max-width: 1200px) {{
         .metric-value {{
-            font-size: 1.8rem;
+            font-size: 1.4rem;
         }}
         .metric-card {{
             min-height: 120px;
-            padding: 1rem 0.5rem;
+            padding: 1rem 0.6rem;
+        }}
+        .metric-label {{
+            font-size: 0.8rem;
+        }}
+    }}
+    
+    @media (max-width: 768px) {{
+        .metric-value {{
+            font-size: 1.2rem;
+        }}
+        .metric-card {{
+            min-height: 100px;
+            padding: 0.8rem 0.4rem;
+        }}
+        .metric-label {{
+            font-size: 0.75rem;
         }}
     }}
     
@@ -838,6 +868,14 @@ load_dashboard_theme()
 
 
 # ---------------- Helper Functions ----------------
+def is_admin_user():
+    """Check if the current logged-in user is admin"""
+    return login_state.get("username") == "admin"
+
+def get_user_filter():
+    """Get database filter based on current user permissions"""
+    return {"created_by_user": login_state.get("username")}  # All users see only their own data
+
 def create_metric_card(label, value, delta=None, delta_color="normal"):
     """Create a metric card with optional delta indicator"""
     delta_html = ""
@@ -1011,9 +1049,13 @@ st.sidebar.markdown(f"""
             border-radius: 12px;
             margin-bottom: 1rem;
             text-align: center;">
-    👤  <strong>{login_state['username']}</strong>
+    👤  <strong>{login_state['username']}</strong><br>
+    👨‍💼 User Access
 </div>
 """, unsafe_allow_html=True)
+
+# Show user access info
+st.sidebar.info("👨‍💼 **User**: You can only see and manage your own data")
 
 # ---------------- Scheduler ----------------
 def clean_orphaned_log_entries():
@@ -1022,6 +1064,7 @@ def clean_orphaned_log_entries():
         return
     
     df = pd.read_excel(LOG_FILE)
+    # Get all existing users (admin can see all, regular users see only their own)
     existing_users = {u['name'] for u in collection.find()}
     
     # Filter out entries for non-existent users
@@ -1042,7 +1085,8 @@ def log_action(user, action, amount=0.0, comment="", updates=None, time=None):
         "comment": comment,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "last_amount_update": datetime.now().replace(tzinfo=None),
-        "time": time or datetime.now().strftime("%Y-%m-%d")
+        "time": time or datetime.now().strftime("%Y-%m-%d"),
+        "created_by_user": user.get('created_by_user', login_state.get("username"))  # Add user ownership
     }
 
     # Add only changed fields from updates
@@ -1354,10 +1398,11 @@ if selected == "Dashboard":
     # Summary Metrics
     col1, col2, col3, col4 = st.columns(4)
     
-    total_users = collection.count_documents({})
-    total_principal = sum([u.get('principal', 0) for u in collection.find()])
-    total_remaining = sum([u.get('remaining_amount', 0) for u in collection.find()])
-    total_interest = sum([u.get('total_interest', 0) for u in collection.find()])
+    user_filter = get_user_filter()
+    total_users = collection.count_documents(user_filter)
+    total_principal = sum([u.get('principal', 0) for u in collection.find(user_filter)])
+    total_remaining = sum([u.get('remaining_amount', 0) for u in collection.find(user_filter)])
+    total_interest = sum([u.get('total_interest', 0) for u in collection.find(user_filter)])
     
     with col1:
         st.markdown(create_metric_card("Total Users", total_users), unsafe_allow_html=True)
@@ -1374,6 +1419,12 @@ if selected == "Dashboard":
     if os.path.exists(LOG_FILE):
         df_logs = pd.read_excel(LOG_FILE)
         if not df_logs.empty:
+            # Filter logs based on user permissions - all users see only their own data
+            if 'created_by_user' in df_logs.columns:
+                df_logs = df_logs[df_logs['created_by_user'] == login_state.get("username")]
+            else:
+                # If created_by_user column doesn't exist, show empty dataframe
+                df_logs = df_logs.iloc[0:0]  # Empty dataframe with same structure
             recent_activity = df_logs.sort_values(by='timestamp', ascending=False).head(10)
             st.dataframe(recent_activity, use_container_width=True)
         else:
@@ -1384,7 +1435,7 @@ if selected == "Dashboard":
     # User Distribution Chart
     st.markdown(create_section_header("👥 User Distribution"), unsafe_allow_html=True)
     
-    user_data = list(collection.find({}, {"name": 1, "principal": 1, "remaining_amount": 1, "total_interest": 1}))
+    user_data = list(collection.find(user_filter, {"name": 1, "principal": 1, "remaining_amount": 1, "total_interest": 1}))
     if user_data:
         df_users = pd.DataFrame(user_data)
         
@@ -1417,12 +1468,18 @@ if selected == "Add User":
         rate = st.number_input("Monthly Interest Rate (%)", min_value=0.0)
         loan_start = st.date_input("Loan Start Date", value=datetime.today())
         
-        # Check for duplicate user in DB or log
-        user_exists = collection.find_one({"name": name})
+        # Check for duplicate user in DB or log (within current user's scope)
+        user_filter = get_user_filter()
+        user_filter["name"] = name
+        user_exists = collection.find_one(user_filter)
         log_exists = False
         if os.path.exists(LOG_FILE):
             df_log = pd.read_excel(LOG_FILE)
-            log_exists = ((df_log['name'] == name) & (df_log['action'] == 'Created')).any()
+            # Check if they already have this name in their scope
+            if 'created_by_user' in df_log.columns:
+                log_exists = ((df_log['name'] == name) & (df_log['action'] == 'Created') & (df_log['created_by_user'] == login_state.get("username"))).any()
+            else:
+                log_exists = False  # If column doesn't exist, no duplicates found
         
         if st.form_submit_button("Add"):
             if not name.strip():
@@ -1432,7 +1489,7 @@ if selected == "Add User":
             elif rate <= 0:
                 st.error("Interest rate must be greater than 0.")
             elif user_exists or log_exists:
-                st.error(f"User '{name}' already exists! Please delete the user and their log before creating again.")
+                st.error(f"User '{name}' already exists in your records! Please delete the user and their log before creating again.")
             else:
                 start_dt = datetime.combine(loan_start, datetime.min.time())
                 data = {
@@ -1443,11 +1500,12 @@ if selected == "Add User":
                     "created_at": datetime.now(),
                     "loan_start_date": start_dt,
                     "monthly_interest_rate": rate,
-                    "original_monthly_interest_rate": rate
+                    "original_monthly_interest_rate": rate,
+                    "created_by_user": login_state.get("username")  # Add user ownership
                 }
                 collection.insert_one(data)
                 # Get the newly created user and apply interest
-                new_user = collection.find_one({"name": name})
+                new_user = collection.find_one({"name": name, "created_by_user": login_state.get("username")})
                 if new_user:
                     apply_monthly_interest(new_user)
                 log_action(data, "Created", 0.0, "Loan created")
@@ -1457,9 +1515,14 @@ if selected == "Add User":
 # Actions
 elif selected == "Actions":
     st.markdown(create_dashboard_header("⚡ User Actions"), unsafe_allow_html=True)
-    names = [u['name'] for u in collection.find({}, {"name": 1})]
+    user_filter = get_user_filter()
+    names = [u['name'] for u in collection.find(user_filter, {"name": 1})]
+    if not names:
+        st.warning("No users found. Please add a user first.")
+        st.stop()
     selected = st.selectbox("Select User", names)
-    user = collection.find_one({"name": selected})
+    user_filter["name"] = selected
+    user = collection.find_one(user_filter)
 
     if user:
         col1, col2, col3 = st.columns(3)
@@ -1474,7 +1537,6 @@ elif selected == "Actions":
         with st.form("action_form"):
             action = st.selectbox("Action", ["Payment", "Interest Update", "Interest Rate"])
             amt = st.number_input("Amount", min_value=0.0)
-            comment = st.text_input("Comment (optional)")
             custom_date = st.date_input("Date", value=datetime.today())
 
             col1, col2 = st.columns(2)
@@ -1505,7 +1567,7 @@ elif selected == "Actions":
                     old_interest = user['total_interest']
 
                     # Log the payment first (chronological recalculation depends on log entries)
-                    log_action(user, action, amt_signed, comment or action, {
+                    log_action(user, action, amt_signed, action, {
                         "remaining_amount": f"₹{old_remaining:,.2f}",
                         "total_interest": f"₹{old_interest:,.2f}"
                     }, time=custom_dt.strftime("%Y-%m-%d"))
@@ -1545,7 +1607,7 @@ elif selected == "Actions":
                     old_interest = user['total_interest']
                     
                     # Log the interest update first (chronological recalculation depends on log entries)
-                    log_action(user, action, amt_signed, comment or action, {
+                    log_action(user, action, amt_signed, action, {
                         "remaining_amount": f"₹{user['remaining_amount']:,.2f}",
                         "total_interest": f"₹{old_interest:,.2f}"
                     }, time=custom_dt.strftime("%Y-%m-%d"))
@@ -1578,7 +1640,7 @@ elif selected == "Actions":
                     new_rate = max(old_rate + amt_signed, 0)
                     
                     # Log the rate change first (chronological recalculation depends on log entries)
-                    log_action(user, action, amt_signed, comment or action, {
+                    log_action(user, action, amt_signed, action, {
                         "remaining_amount": f"₹{user['remaining_amount']:,.2f}",
                         "total_interest": f"₹{user['total_interest']:,.2f}",
                         "monthly_interest_rate": f"{old_rate}%"
@@ -1625,13 +1687,19 @@ elif selected == "View":
     # Clean up orphaned log entries first
     clean_orphaned_log_entries()
     
-    names = sorted([u['name'] for u in collection.find()])
-    selected = st.selectbox("User", ["All"] + names)
+    user_filter = get_user_filter()
+    names = sorted([u['name'] for u in collection.find(user_filter)])
+    
+    # All users see only their own data
+    if not names:
+        st.warning("No users found. Please add a user first.")
+        st.stop()
+    selected = st.selectbox("User", names)
     timeline = []
 
     # Add loan creation data
-    for u in collection.find():
-        if selected != "All" and u['name'] != selected:
+    for u in collection.find(user_filter):
+        if u['name'] != selected:
             continue
         timeline.append({
             "name": u['name'],
@@ -1648,12 +1716,18 @@ elif selected == "View":
     # Add log data from Excel (only for users that exist in database)
     if os.path.exists(LOG_FILE):
         df_logs = pd.read_excel(LOG_FILE)
-        if selected != "All":
-            df_logs = df_logs[df_logs['name'] == selected]
+        df_logs = df_logs[df_logs['name'] == selected]
         
-        # Filter out log entries for users that don't exist in database
-        existing_users = {u['name'] for u in collection.find()}
+        # Filter out log entries for users that don't exist in database and respect user permissions
+        existing_users = {u['name'] for u in collection.find(user_filter)}
         df_logs = df_logs[df_logs['name'].isin(existing_users)]
+        
+        # All users see only their own data
+        if 'created_by_user' in df_logs.columns:
+            df_logs = df_logs[df_logs['created_by_user'] == login_state.get("username")]
+        else:
+            # If created_by_user column doesn't exist, show empty dataframe
+            df_logs = df_logs.iloc[0:0]  # Empty dataframe with same structure
         
         for _, row in df_logs.iterrows():
             timeline.append(row.to_dict())
@@ -1738,20 +1812,12 @@ elif selected == "View":
     # ✅ Use last non-null values instead of sum, but ignore 'Created' and 'Summary After Delete' actions
     valid_rows = df_display[~df_display['action'].isin(['Created', 'Summary After Delete'])]
 
-    if selected != "All":
-        # For a single user, always show the current state from the database
-        user_doc = collection.find_one({"name": selected})
-        total_remaining = user_doc["remaining_amount"] if user_doc else 0
-        total_interest = user_doc["total_interest"] if user_doc else 0
-    else:
-        # For all users, sum the last valid values for each user
-        total_remaining = 0
-        total_interest = 0
-        for uname in names:
-            user_doc = collection.find_one({"name": uname})
-            if user_doc:
-                total_remaining += user_doc.get("remaining_amount", 0)
-                total_interest += user_doc.get("total_interest", 0)
+    # For the selected user, always show the current state from the database
+    user_query = user_filter.copy()
+    user_query["name"] = selected
+    user_doc = collection.find_one(user_query)
+    total_remaining = user_doc["remaining_amount"] if user_doc else 0
+    total_interest = user_doc["total_interest"] if user_doc else 0
 
     # ---------- Inject Correct Total Interest from Summary ----------
     if selected != "All":
@@ -1789,24 +1855,25 @@ elif selected == "View":
             if not match_idx.empty:
                 df_display.at[match_idx[0], 'total_interest'] = total_interest_str
 
-    # ---------- Summary View for single user ----------
-    if selected != "All":
-        st.markdown(create_section_header(f"📊 Summary for {selected}"), unsafe_allow_html=True)
-        df_user = df_display[df_display['name'] == selected].copy()
-        df_user = df_user[df_user['remaining_amount'].notnull() & df_user['total_interest'].notnull()]
-        if not df_user.empty:
-            latest_row = df_user.iloc[-1]
-            remaining_amount = latest_row['remaining_amount']
-            total_interest = latest_row['total_interest']  # already formatted string
-            user = collection.find_one({"name": selected})
-            st.markdown(f"""
-                - **Amount:** ₹{user.get("principal", 0.0)}
-                - **Remaining Amount:** ₹{remaining_amount:,.2f}  
-                - **Total Interest:** {total_interest}  
-                - **Interest Rate:** {user.get('monthly_interest_rate', 0)}%
-            """)
-        else:
-            st.warning("No data available to summarize.")
+    # ---------- Summary View for selected user ----------
+    st.markdown(create_section_header(f"📊 Summary for {selected}"), unsafe_allow_html=True)
+    df_user = df_display[df_display['name'] == selected].copy()
+    df_user = df_user[df_user['remaining_amount'].notnull() & df_user['total_interest'].notnull()]
+    if not df_user.empty:
+        latest_row = df_user.iloc[-1]
+        remaining_amount = latest_row['remaining_amount']
+        total_interest = latest_row['total_interest']  # already formatted string
+        user_query = user_filter.copy()
+        user_query["name"] = selected
+        user = collection.find_one(user_query)
+        st.markdown(f"""
+            - **Amount:** ₹{user.get("principal", 0.0)}
+            - **Remaining Amount:** ₹{remaining_amount:,.2f}  
+            - **Total Interest:** {total_interest}  
+            - **Interest Rate:** {user.get('monthly_interest_rate', 0)}%
+        """)
+    else:
+        st.warning("No data available to summarize.")
 
     # ------------------- Delete Action Section -------------------
     if selected != "All":
@@ -1975,7 +2042,8 @@ elif selected == "Data Entry":
                 "Name": name.strip(),
                 "Amount": amount,
                 "Interest": interest,
-                "Total": total
+                "Total": total,
+                "created_by_user": login_state.get("username")  # Add user ownership
             }])
 
             if os.path.exists(DATA_ENTRY_FILE):
@@ -1992,35 +2060,53 @@ elif selected == "Data Entry":
         st.subheader("🔍 View User Entries")
         df = pd.read_excel(DATA_ENTRY_FILE)
         
-        # Get unique names and add "All Users" option
-        unique_names = ["All Users"] + sorted(df['Name'].unique().tolist())
+        # Filter data based on user permissions - all users see only their own data
+        if 'created_by_user' in df.columns:
+            df = df[df['created_by_user'] == login_state.get("username")]
+        else:
+            # If created_by_user column doesn't exist, show empty dataframe for non-admin users
+            df = df.iloc[0:0]  # Empty dataframe with same structure
+        
+        # Get unique names
+        unique_names = sorted(df['Name'].unique().tolist())
+        if not unique_names:
+            st.info("No entries found. Add some entries using the form above.")
+            st.stop()
+        
         selected_name = st.selectbox("Select a user to view their entries", unique_names)
         
-        if selected_name != "All Users":
-            user_df = df[df['Name'] == selected_name]
-            st.write(f"### All entries for {selected_name}")
-            
-            # Calculate and display summary stats
-            total_amount = user_df['Amount'].sum()
-            total_interest = user_df['Interest'].sum()
-            overall_total = user_df['Total'].sum()
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total Amount", f"₹{total_amount:,.2f}")
-            with col2:
-                st.metric("Total Interest", f"₹{total_interest:,.2f}")
-            with col3:
-                st.metric("Overall Total", f"₹{overall_total:,.2f}")
-            
-            st.dataframe(user_df, use_container_width=True)
+        user_df = df[df['Name'] == selected_name]
+        st.write(f"### All entries for {selected_name}")
+        
+        # Calculate and display summary stats
+        total_amount = user_df['Amount'].sum()
+        total_interest = user_df['Interest'].sum()
+        overall_total = user_df['Total'].sum()
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Amount", f"₹{total_amount:,.2f}")
+        with col2:
+            st.metric("Total Interest", f"₹{total_interest:,.2f}")
+        with col3:
+            st.metric("Overall Total", f"₹{overall_total:,.2f}")
+        
+        st.dataframe(user_df, use_container_width=True)
         
         st.subheader("✏️ Edit Data")
         
+        # Filter the dataframe for editing based on user permissions - all users see only their own data
+        edit_df = pd.read_excel(DATA_ENTRY_FILE)
+        if 'created_by_user' in edit_df.columns:
+            edit_df = edit_df[edit_df['created_by_user'] == login_state.get("username")]
+        else:
+            # If created_by_user column doesn't exist, show empty dataframe
+            edit_df = edit_df.iloc[0:0]  # Empty dataframe with same structure
+        
         # Add a delete column with checkboxes
-        df['Delete'] = False
+        edit_df['Delete'] = False
         edited_df = st.data_editor(
-            df,
+            edit_df,
             use_container_width=True,
             key="edit_data_entry",
             column_config={
@@ -2035,15 +2121,32 @@ elif selected == "Data Entry":
                 edited_df = edited_df[~edited_df['Delete']]
                 # Remove the Delete column before saving
                 edited_df = edited_df.drop(columns=['Delete'])
-                edited_df.to_excel(DATA_ENTRY_FILE, index=False)
+                
+                # Merge with the full dataset
+                # Read the full dataset
+                full_df = pd.read_excel(DATA_ENTRY_FILE)
+                # Remove user's existing data
+                if 'created_by_user' in full_df.columns:
+                    full_df = full_df[full_df['created_by_user'] != login_state.get("username")]
+                # Add user's updated data (after deletions)
+                full_df = pd.concat([full_df, edited_df], ignore_index=True)
+                full_df.to_excel(DATA_ENTRY_FILE, index=False)
+                    
                 st.success("✅ Selected rows deleted and changes saved!")
                 st.rerun()
         
         # Check for other edits (non-deletion changes)
-        elif not edited_df.drop(columns=['Delete']).equals(df.drop(columns=['Delete'])):
-            # Remove the Delete column before saving
-            edited_df = edited_df.drop(columns=['Delete'])
-            edited_df.to_excel(DATA_ENTRY_FILE, index=False)
+        elif not edited_df.drop(columns=['Delete']).equals(edit_df.drop(columns=['Delete'])):
+            # Merge changes with the full dataset
+            # Read the full dataset
+            full_df = pd.read_excel(DATA_ENTRY_FILE)
+            # Remove user's existing data
+            if 'created_by_user' in full_df.columns:
+                full_df = full_df[full_df['created_by_user'] != login_state.get("username")]
+            # Add user's updated data
+            user_edited_df = edited_df.drop(columns=['Delete'])
+            full_df = pd.concat([full_df, user_edited_df], ignore_index=True)
+            full_df.to_excel(DATA_ENTRY_FILE, index=False)
             st.success("✅ Changes saved to Excel!")
             
         # Add Excel download button with styling at the bottom
@@ -2075,7 +2178,15 @@ elif selected == "Data Entry":
 
             return output.getvalue()
 
-        excel_bytes = export_to_excel(df)
+        # Export only the data the user has access to - all users see only their own data
+        export_df = pd.read_excel(DATA_ENTRY_FILE)
+        if 'created_by_user' in export_df.columns:
+            export_df = export_df[export_df['created_by_user'] == login_state.get("username")]
+        else:
+            # If created_by_user column doesn't exist, show empty dataframe
+            export_df = export_df.iloc[0:0]  # Empty dataframe with same structure
+        
+        excel_bytes = export_to_excel(export_df)
         st.download_button(
             label="📥 Download Data as Excel",
             data=excel_bytes,
