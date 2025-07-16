@@ -10,6 +10,7 @@ from io import BytesIO
 import base64
 import bcrypt
 import smtplib
+import os
 from email.mime.text import MIMEText
 import secrets
 import openpyxl
@@ -22,14 +23,19 @@ load_dotenv()
 
 
 MONGO_URI = os.getenv("MONGO_URI")
-client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
 
+client = MongoClient(
+    MONGO_URI,
+    tls=True,
+    tlsAllowInvalidCertificates=False,  # ❌ Turn this off for certifi
+    tlsCAFile=certifi.where()           # ✅ Use certifi's CA bundle
+)
 
-# ---------------- Setup ----------------
 db = client[os.getenv("MONGO_DB")]
 collection = db["user_finance"]
 users_col = db["users"]
 reset_tokens_col = db["reset_tokens"]
+
 LOG_FILE = os.path.join(os.getcwd(), 'update_log.xlsx')
 
 if not users_col.find_one({"username": "admin"}):
