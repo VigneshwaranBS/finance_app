@@ -1,5 +1,5 @@
 streamlit==1.29.0
-pymongo==4.6.0
+pymongo>=4.7.0
 pandas==2.0.3
 apscheduler==3.10.1
 streamlit-option-menu==0.3.2
@@ -11,3 +11,4 @@ python-dotenv==1.0.0  # Recommended for environment variables
 pytz==2023.3  # For timezone handling
 websocket-client
 websockets
+dnspython>=2.3.0
