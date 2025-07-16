@@ -16,14 +16,14 @@ import openpyxl
 import plotly.express as px
 import plotly.graph_objects as go
 from pymongo import MongoClient
+from dotenv import load_dotenv
+load_dotenv()
 
 
 
 # ---------------- Setup ----------------
-
-
-client = MongoClient("mongodb+srv://thanusri:Thanu%402003@cluster0.jtoon3t.mongodb.net/finance_db?retryWrites=true&w=majority&tls=true&tlsAllowInvalidCertificates=true")
-db = client["finance"]
+client = MongoClient(os.getenv("MONGO_URI"))
+db = client[os.getenv("MONGO_DB")]
 collection = db["user_finance"]
 users_col = db["users"]
 reset_tokens_col = db["reset_tokens"]
