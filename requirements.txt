@@ -1,5 +1,5 @@
 streamlit==1.29.0
-pymongo>=4.7.0
+pymongo>=4.7.2
 pandas==2.0.3
 apscheduler==3.10.1
 streamlit-option-menu==0.3.2
@@ -7,9 +7,9 @@ streamlit-ws-localstorage==1.0.5
 bcrypt==4.0.1
 plotly==5.18.0
 openpyxl==3.1.2
-python-dotenv==1.0.0  # Recommended for environment variables
-pytz==2023.3  # For timezone handling
+python-dotenv==1.0.0
+pytz==2023.3
 websocket-client
 websockets
-dnspython>=2.3.0
-python-dotenv==1.0.0
+dnspython>=2.4.2
+certifi>=2025.0.0
